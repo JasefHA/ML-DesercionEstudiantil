@@ -1,3 +1,7 @@
 # Ignorar la carpeta export y todo su contenido
 export
 sources
+export/*.csv
+export/*.xlsx
+sources/*.csv
+sources/*.xlsx
