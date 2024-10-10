@@ -17,7 +17,7 @@ df_matriculados_2023_1 = pd.read_csv(os.path.join(ruta_export,'Matriculados_2023
 df_matriculados_2022_2 = pd.read_csv(os.path.join(ruta_export,'Matriculados_2022_2.csv'))
 df_matriculados_2022_1 = pd.read_csv(os.path.join(ruta_export,'Matriculados_2022_1.csv'))
 
-
+df_info_matriculados = pd.read_excel(os.path.join(ruta_sources,'DATA INGRESANTES MATRICULADOS.xlsx'))
 df_desertores_2023_2 = pd.read_csv(os.path.join(ruta_export,'Desertores_2023_2.csv'))
 
 df_variables = pd.read_csv(os.path.join(ruta_export,'DataMaestra_Estudiante.csv'))
@@ -35,27 +35,53 @@ df_pagos_2023 = pd.read_csv(os.path.join(ruta_sources,'pagos cachimbos 2023-2.cs
 
 
 nota_aprobatoria = 13
-notas_desaprobadas = 7
+notas_desaprobadas = 5
 periodo = '2023-2'
+
+# %% [markdown]
+# # VARIABLE DESCUENTO
+
+# %%
+
+# Renombrar la columna 'Codigo Alumno' a 'IdAlumno' (si no se hizo anteriormente)
+df_info_matriculados.rename(columns={'Codigo Alumno': 'IdAlumno'}, inplace=True)
+
+# Reemplazar los valores en la columna 'DESCUENTO'
+df_info_matriculados['DESCUENTO'] = np.where(df_info_matriculados['DESCUENTO'].isnull(), 0, 1)
+
+# Eliminar duplicados
+df_info_matriculados.drop_duplicates(inplace=True)
+
+df_info_matriculados = df_info_matriculados.groupby('IdAlumno', as_index=False \
+    ).agg({'DESCUENTO': 'max'})  # Obtiene el valor máximo de DESCUENTO (1 si existe, 0 si no)
+
+# Verificar el resultado final, solo con las columnas deseadas
+print(df_info_matriculados[['IdAlumno', 'DESCUENTO']])
+
 
 # %% [markdown]
 # # CALCULO VARIABLES NOTAS
 
 # %%
+# Paso 1: Agrupar por IdAlumno, Curso, Actividad y calcular la nota máxima
+df_notas_maximas = df_notas_2023_2.groupby(['IdAlumno', 'Curso', 'Actividad'], as_index=False).agg(
+    NotaMaxima=('NotaActiv', 'max')
+)
+
 # Agrupar por IdAlumno y contar los registros de parciales y finales desaprobados
-df_cant_desaprobado_agrupado = df_notas_2023_2.groupby('IdAlumno').agg(
+df_cant_desaprobado_agrupado = df_notas_maximas.groupby('IdAlumno').agg(
     CantParcialesDesaprobados=(
         'Actividad', 
-        lambda x: ((x == 'EVALUACION PARCIAL') & (df_notas_2023_2.loc[x.index, 'NotaActiv'] < nota_aprobatoria)).sum()
+        lambda x: ((x == 'EVALUACION PARCIAL') & (df_notas_maximas.loc[x.index, 'NotaMaxima'] < nota_aprobatoria)).sum()
     ),
     CantFinalesDesaprobados=(
         'Actividad', 
-        lambda x: ((x == 'EVALUACION FINAL') & (df_notas_2023_2.loc[x.index, 'NotaActiv'] < nota_aprobatoria)).sum()
+        lambda x: ((x == 'EVALUACION FINAL') & (df_notas_maximas.loc[x.index, 'NotaMaxima'] < nota_aprobatoria)).sum()
     ),
     # Columna auxiliar para contar las evaluaciones diferentes de PARCIAL y FINAL desaprobadas
     CantNotasDesaprobadasNoParcNoFin=(
         'Actividad', 
-        lambda x: ((~x.isin(['EVALUACION PARCIAL', 'EVALUACION FINAL', 'EVALUACION DIAGNOSTICA'])) & (df_notas_2023_2.loc[x.index, 'NotaActiv'] < nota_aprobatoria)).sum()
+        lambda x: ((~x.isin(['EVALUACION PARCIAL', 'EVALUACION FINAL', 'EVALUACION DIAGNOSTICA'])) & (df_notas_maximas.loc[x.index, 'NotaMaxima'] < nota_aprobatoria)).sum()
     )
 ).reset_index()
 
@@ -64,8 +90,6 @@ df_cant_desaprobado_agrupado['ExcedeNotasDesaprobadasNoParcNoFin'] = df_cant_des
     lambda x: 'SI' if x >= notas_desaprobadas else 'NO'
 )
 
-# Eliminar la columna 'CantNotasDesaprobadasNoParcNoFin' 
-df_cant_desaprobado_agrupado.drop(columns=['CantNotasDesaprobadasNoParcNoFin'], inplace=True)
 
 # Calcular la nota final para cada curso por alumno
 df_notas_2023_2['NotaFinalCurso'] = np.where(
@@ -99,8 +123,7 @@ df_cursos_desaprobados['ExcedeMitadCursosDesaprobados'] = df_cursos_desaprobados
     lambda row: 'SI' if (row['CantCursosDesaprobados'] / row['CantCursos']) >= 0.5 else 'NO', axis=1
 )
 
-# Eliminar la columna 'CantNotasDesaprobadasNoParcNoFin' 
-df_cursos_desaprobados.drop(columns=['CantCursosDesaprobados','CantCursos'], inplace=True)
+
 
 # Unir este resultado con el DataFrame anterior
 df_cant_desaprobado_agrupado = df_cant_desaprobado_agrupado.merge(
@@ -115,8 +138,22 @@ df_cant_desaprobado_agrupado = df_cant_desaprobado_agrupado.merge(
     how='left'
 )
 
+# Eliminar la columna 'CantNotasDesaprobadasNoParcNoFin' 
+df_cursos_desaprobados.drop(columns=['CantCursosDesaprobados','CantCursos'], inplace=True)
+
+# Eliminar la columna 'CantNotasDesaprobadasNoParcNoFin' 
+df_cant_desaprobado_agrupado.drop(columns=['CantNotasDesaprobadasNoParcNoFin'], inplace=True)
+
+
 # Visualizar el DataFrame final
 print(df_cant_desaprobado_agrupado.head())
+
+# %%
+# Filtrar el DataFrame para encontrar el registro específico
+resultado = df_cant_desaprobado_agrupado[df_cant_desaprobado_agrupado['ExcedeMitadCursosDesaprobados'] == 'SI']
+
+# Verifica el resultado
+print(resultado)
 
 # %% [markdown]
 # # CALCULO DE VARIABLES DE PAGO
@@ -186,6 +223,9 @@ df = pd.merge(df, df_colegio_procedencia, on='IdAlumno', how='left')
 #Variables Pagos
 df = pd.merge(df, df_resultado_pagos, on='IdAlumno', how='left')
 
+#Variable Beca
+df = pd.merge(df, df_info_matriculados, on='IdAlumno', how='left') 
+
 # columna objetivo
 df['Desercion'] = df['IdAlumno'].isin(df_desertores_2023_2['IdAlumno']).astype(int)
 
@@ -247,7 +287,6 @@ df.loc[df['FechaNacimiento'].isnull(), 'FechaNacimiento'] = fechas_aleatorias
 # Obtener el año de nacimiento de los nulos en FechaNacimiento
 df.loc[df['AnioNacimiento'].isnull(), 'AnioNacimiento'] = df['FechaNacimiento'].str.split('-').str[0].astype(int)
 
-#print(df)
 print(df.isnull().sum())
 
 
@@ -333,19 +372,69 @@ print(df.isnull().sum())
 
 # %%
 df['TipoColegio'] = df_colegio_procedencia['TipoColegio'].replace({'RELG': 'PRIV', 'OTHR': 'PUBL'}).fillna('PUBL')
+print(df.isnull().sum())
 
+# %% [markdown]
+# ### Rellenos variables relacionadas a pagos
+
+# %%
+# Rellenar los valores nulos
+df['CantArmadas'] = df['CantArmadas'].fillna(5)
+df['CantArmadasRetraso7dias'] = df['CantArmadasRetraso7dias'].fillna(5)
+df['ExcedePagosAtrasados'] = df['ExcedePagosAtrasados'].fillna(1)
+
+print(df.isnull().sum())
+
+# %% [markdown]
+# ### Relleno el descuento
+
+# %%
+df['DESCUENTO'] = df['DESCUENTO'].fillna(0)
 print(df.isnull().sum())
 
 # %%
 print(df.shape)
-df.to_csv('cachimbos.csv')
 
 # %%
-variables_modelo = ['Edad', 'Genero', 'Distrito', 'Provincia', 'Departamento', 'FamiliarResponsable', 'CantParcialesDesaprobados', 'CantFinalesDesaprobados','ExcedeNotasDesaprobadasNoParcNoFin','ExcedeMitadCursosDesaprobados','GrupoEdad','ExcedePagosAtrasados','TipoColegio', 'Desercion']
+variables_modelo = ['IdAlumno',
+                    'Edad', 
+                    'Genero', 
+                    'Distrito', 
+                    'Provincia', 
+                    'Departamento', 
+                    'FamiliarResponsable', 
+                    'CantParcialesDesaprobados', 
+                    'CantFinalesDesaprobados',
+                    'ExcedeNotasDesaprobadasNoParcNoFin',
+                    'ExcedeMitadCursosDesaprobados',
+                    'GrupoEdad',
+                    'ExcedePagosAtrasados',
+                    'TipoColegio',
+                    #'DESCUENTO',
+                    'Desercion'
+                    ]
 df_modelo = df[variables_modelo]
 
-# %%
-df_modelo = pd.get_dummies(df_modelo, columns=['Genero', 'Distrito', 'Provincia', 'Departamento', 'FamiliarResponsable', 'CantParcialesDesaprobados', 'CantFinalesDesaprobados','ExcedeNotasDesaprobadasNoParcNoFin','ExcedeMitadCursosDesaprobados','GrupoEdad','ExcedePagosAtrasados','TipoColegio'], drop_first=True)
+# Separar IdAlumno
+id_alumno = df_modelo['IdAlumno']
+
+# Convertir variables categóricas en variables dummy
+df_modelo = pd.get_dummies(df_modelo.drop(columns=['IdAlumno']), 
+                            columns=['Genero', 
+                                     'Distrito', 
+                                     'Provincia', 
+                                     'Departamento', 
+                                     'FamiliarResponsable', 
+                                     'CantParcialesDesaprobados', 
+                                     'CantFinalesDesaprobados',
+                                     'ExcedeNotasDesaprobadasNoParcNoFin', 
+                                     'ExcedeMitadCursosDesaprobados',
+                                     'GrupoEdad', 
+                                     'ExcedePagosAtrasados', 
+                                     'TipoColegio'#,
+                                     #'DESCUENTO'
+                                    ], drop_first=True)
+
 
 # %% [markdown]
 # # CREACION DEL MODELO
@@ -360,6 +449,15 @@ y = df_modelo['Desercion']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
 # %%
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix,f1_score, precision_score, recall_score
+import xgboost as xgb
+from sklearn.model_selection import GridSearchCV
+import shap
+
 # Diccionario que guarda las métricas
 metricas_dict = {
     "Modelo": [],
@@ -369,30 +467,39 @@ metricas_dict = {
     "F1-Score": [],
     "Precisión": [],
     "Recall": [],
-    #"Verdaderos Negativos": [],
-    #"Falsos Positivos": [],
-    #"Falsos Negativos": [],
-    #Verdaderos Positivos": [],
     "Puntuación": []
 }
 
-# %%
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix,f1_score, precision_score, recall_score
-import xgboost as xgb
+predicciones_dict = {}
+modelos_dict = {}  # Diccionario para guardar los modelos entrenados
+probabilidades_dict = {}
+umbral = 0.40
 
 # Función para calcular métricas
-def calcular_metricas(model, X_test, y_test, nombre_modelo):
-    y_pred = model.predict(X_test)
+def calcular_metricas(model,flg_grid_search, X_train, y_train, X_test, y_test, nombre_modelo):
+
+    if flg_grid_search == 0: #Si no es grid search yo lo entreno
+        # Entrenar el modelo con el conjunto de entrenamiento
+        model.fit(X_train, y_train)
+
+    y_prob = model.predict_proba(X_test)[:, 1]
+    # Hacer predicciones en el conjunto de prueba
+    y_pred = (y_prob >= umbral).astype(int)  
+
+    # Hacer predicciones en todo el conjunto de datos para almacenar el % de probabilidad completo
+    y_prob_completo = model.predict_proba(X)[:, 1]
+
+    # Hacer predicciones en todo el conjunto de datos
+    y_pred_completo = (y_prob_completo >= umbral).astype(int)
+
+
+    # Calculo de métrcias
     accuracy = accuracy_score(y_test, y_pred)
     auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
     f1 = f1_score(y_test, y_pred)
     precision = precision_score(y_test, y_pred, zero_division=0)
     recall = recall_score(y_test, y_pred)
-    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+
 
     puntuacion = (0.3 * accuracy) + (0.1 * precision) + (0.3 * recall) + (0.2 * f1) + (0.4 * auc)
     
@@ -404,6 +511,17 @@ def calcular_metricas(model, X_test, y_test, nombre_modelo):
     metricas_dict["Precisión"].append(precision)
     metricas_dict["Recall"].append(recall)
     metricas_dict["Puntuación"].append((puntuacion))
+
+    # Almacenar las predicciones en un diccionario
+    predicciones_dict[nombre_modelo] = y_pred_completo
+
+    # Almacenar las predicciones % en un diccionario
+    probabilidades_dict[nombre_modelo] = y_prob_completo
+
+    # Guardar el modelo entrenado en el diccionario
+    modelos_dict[nombre_modelo] = model  # Aquí guardamos el modelo
+    
+
 
 # %% [markdown]
 # ## MODELOS SIN BALANCEO
@@ -420,8 +538,7 @@ modelos = [
 # %%
 # Entrenar y evaluar los modelos
 for nombre_modelo, modelo in modelos:
-    modelo.fit(X_train, y_train)
-    calcular_metricas(modelo, X_test, y_test, nombre_modelo)
+    calcular_metricas(modelo,0,X_train,y_train, X_test, y_test, nombre_modelo)
 
 # %% [markdown]
 # ## MODELOS CON BALANCEO
@@ -434,8 +551,7 @@ X_resampled, y_resampled = smote.fit_resample(X_train, y_train)
 
 # Reentrenar modelos con datos balanceados
 for nombre_modelo, modelo in modelos:
-    modelo.fit(X_resampled, y_resampled)
-    calcular_metricas(modelo, X_test, y_test, f"{nombre_modelo} (SMOTE)")
+    calcular_metricas(modelo,0,X_resampled, y_resampled, X_test, y_test, f"{nombre_modelo} (SMOTE)")
 
 # %% [markdown]
 # ## MODELOS CON BALANCEO Y AJUSTE DE HIPERPARAMETROS
@@ -487,13 +603,14 @@ modelos_param_grids = [
 for nombre_modelo, modelo, param_grid in modelos_param_grids:
     grid_search = GridSearchCV(estimator=modelo, param_grid=param_grid, scoring='roc_auc', cv=5, n_jobs=-1)
     grid_search.fit(X_resampled, y_resampled)
+
     
     # Entrenamos con los mejores hiperparámetros
     best_model = grid_search.best_estimator_
     print(f"Mejores parámetros para {nombre_modelo}: {grid_search.best_params_}")
     
     # Calculamos métricas con los mejores hiperparámetros
-    calcular_metricas(best_model, X_test, y_test, f"{nombre_modelo} (Optimizado y con SMOTE)")
+    calcular_metricas(best_model,1,X_resampled,y_resampled, X_test, y_test, f"{nombre_modelo} (Optimizado y con SMOTE)")
 
 # %% [markdown]
 # # EXPORTADO DE METRICAS
@@ -504,6 +621,81 @@ df_metricas = pd.DataFrame(metricas_dict)
 df_metricas = df_metricas.sort_values(by="Puntuación", ascending=False)
 df_metricas.to_csv(os.path.join(ruta_output,'Modelo_Desercion_Metricas.csv'))
 print(df_metricas)
+
+# %%
+# Seleccionar el modelo ganador basado en la puntuación más alta
+modelo_ganador_idx = df_metricas['Puntuación'].idxmax()
+modelo_ganador = df_metricas.loc[modelo_ganador_idx]
+nombre_modelo_ganador = modelo_ganador["Modelo"]
+
+print(f"El modelo ganador es: {nombre_modelo_ganador}")
+print(modelo_ganador)
+
+# %%
+print(len(predicciones_dict[nombre_modelo_ganador]))
+
+# %%
+# Crear DataFrame con IdAlumno y las predicciones
+predicciones_df = pd.DataFrame({
+    'IdAlumno': id_alumno.loc[X.index],  # Usar índices de X
+    'Prediccion': predicciones_dict[nombre_modelo_ganador],
+    'Prediccion_Probabilidad': probabilidades_dict[nombre_modelo_ganador]
+})
+
+dataset_base = df[variables_modelo]
+
+resultado_final = pd.merge(predicciones_df,dataset_base,on='IdAlumno',how='left') 
+
+print(resultado_final.shape)
+print(resultado_final)
+
+resultado_final.to_csv(os.path.join(ruta_output,'Prediccion.csv'), index=False)
+
+# %%
+obj_modelo_ganador = modelos_dict[nombre_modelo_ganador]
+print(obj_modelo_ganador)
+
+# %%
+# Obtener coeficientes
+coeficientes = obj_modelo_ganador.coef_[0]  # Para SVM lineales
+importancia_features = pd.Series(coeficientes, index=X_train.columns)
+importancia_features.sort_values(ascending=False, inplace=True)
+
+
+# Mostrar las características más importantes
+print(type(importancia_features))
+
+# %%
+# Crear el explainer para el modelo SVM
+explainer = shap.LinearExplainer(obj_modelo_ganador, X)
+
+# Calcular los valores SHAP
+shap_values = explainer.shap_values(X)
+
+print(len(shap_values))
+
+
+# %%
+# Convertir los valores SHAP en un DataFrame
+shap_df = pd.DataFrame(shap_values, columns=X.columns)
+
+# %%
+# Agregar la columna 'IdAlumno'
+shap_df['IdAlumno'] = id_alumno.values
+
+# %%
+print(shap_df)
+shap_df.to_csv(os.path.join(ruta_output,'Impacto_Variables.csv'),index=False)
+
+# %%
+# Filtrar el DataFrame para el IdAlumno específico
+id_alumno_especifico = 100014115
+resultado_filtrado = shap_df.loc[shap_df['IdAlumno'] == id_alumno_especifico]
+
+# Mostrar el resultado filtrado
+#print(resultado_filtrado)
+print(display(resultado_filtrado))
+
 
 # %%
 
